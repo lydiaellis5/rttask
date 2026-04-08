@@ -1,0 +1,223 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Reaction Time Experiment</title>
+    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/chartjs-plugin-annotation@3.0.1"></script>
+    <style>
+        body, html { margin: 0; padding: 0; width: 100%; height: 100%; overflow: hidden; font-family: 'Segoe UI', sans-serif; background-color: #121212; color: white; }
+        
+        #screen-welcome, #screen-finished {
+            display: flex; flex-direction: column; align-items: center; justify-content: center; height: 100vh; text-align: center;
+        }
+
+        #screen-task { display: none; cursor: crosshair; }
+
+        .card { background: #1e1e1e; padding: 2rem; border-radius: 12px; border: 1px solid #333; box-shadow: 0 10px 30px rgba(0,0,0,0.5); width: 80%; max-width: 600px; }
+        
+        input { width: 100%; padding: 12px; margin: 20px 0; border-radius: 6px; border: 1px solid #444; background: #2d2d2d; color: white; box-sizing: border-box; font-size: 1rem; }
+        
+        button { padding: 12px 24px; border: none; border-radius: 6px; background: #00e676; color: #000; font-weight: bold; cursor: pointer; font-size: 1rem; transition: 0.2s; }
+        button:hover { background: #00c853; transform: translateY(-2px); }
+
+        #experiment-canvas { display: block; background-color: #000; }
+        
+        .chart-container { position: relative; height: 40vh; width: 100%; margin: 20px 0; }
+        
+        .loader { border: 4px solid #333; border-top: 4px solid #00e676; border-radius: 50%; width: 30px; height: 30px; animation: spin 1s linear infinite; margin: 20px auto; }
+        @keyframes spin { 0% { transform: rotate(0deg); } 100% { transform: rotate(360deg); } }
+    </style>
+</head>
+<body>
+
+    <div id="screen-welcome">
+        <div class="card">
+            <h2>Reaction Time Study</h2>
+            <p>Enter your ID or leave blank for a random one.</p>
+            <input type="text" id="participantId" placeholder="Participant ID">
+            <button onclick="initExperiment()">Start Task</button>
+        </div>
+    </div>
+
+    <div id="screen-task">
+        <canvas id="experiment-canvas"></canvas>
+    </div>
+
+    <div id="screen-finished" style="display: none;">
+        <div class="card">
+            <h2 id="status-title">Uploading Results...</h2>
+            <p id="avg-display"></p>
+            <div id="loader" class="loader"></div>
+            
+            <div class="chart-container">
+                <canvas id="rtChart"></canvas>
+            </div>
+            
+            <p id="status-text" style="font-size: 0.8rem; color: #888;"></p>
+            <button id="restart-btn" style="display:none;" onclick="location.reload()">Restart Experiment</button>
+        </div>
+    </div>
+
+<script>
+    const WEB_APP_URL = "https://script.google.com/macros/s/AKfycbwrp6WwCxW18RQk_I9A3jBlf4VIev8jtExxD8bkfrZaf08Nt97PoghqbUu8mHYYhyve/exec";
+    
+    let participantId;
+    let trials = [];
+    const maxTrials = 10;
+    let currentTrial = 0;
+    let trialStartTime;
+    
+    const canvas = document.getElementById('experiment-canvas');
+    const ctx = canvas.getContext('2d');
+    const radius = 50;
+    let targetX, targetY;
+
+    function generateID() {
+        return 'P-' + Math.random().toString(36).substr(2, 7).toUpperCase();
+    }
+
+    function initExperiment() {
+        const inputVal = document.getElementById('participantId').value.trim();
+        participantId = inputVal || generateID();
+        
+        document.getElementById('screen-welcome').style.display = 'none';
+        document.getElementById('screen-task').style.display = 'block';
+        
+        resizeCanvas();
+        window.addEventListener('resize', resizeCanvas);
+        setTimeout(spawnCircle, 1000);
+    }
+
+    function resizeCanvas() {
+        canvas.width = window.innerWidth;
+        canvas.height = window.innerHeight;
+    }
+
+    function spawnCircle() {
+        if (currentTrial >= maxTrials) {
+            submitAllData();
+            return;
+        }
+        targetX = Math.random() * (canvas.width - radius * 2) + radius;
+        targetY = Math.random() * (canvas.height - radius * 2) + radius;
+        draw();
+        trialStartTime = performance.now();
+        canvas.onclick = handleCanvasClick;
+    }
+
+    function draw() {
+        ctx.clearRect(0, 0, canvas.width, canvas.height);
+        ctx.beginPath();
+        ctx.arc(targetX, targetY, radius, 0, Math.PI * 2);
+        ctx.fillStyle = "#00e676";
+        ctx.shadowBlur = 15;
+        ctx.shadowColor = "#00e676";
+        ctx.fill();
+        ctx.closePath();
+    }
+
+    function handleCanvasClick(e) {
+        const dist = Math.sqrt((e.clientX - targetX)**2 + (e.clientY - targetY)**2);
+        if (dist <= radius) {
+            const rt = Math.round(performance.now() - trialStartTime);
+            canvas.onclick = null;
+            currentTrial++;
+            trials.push({ Participant_ID: participantId, Trial_Number: currentTrial, Reaction_Time: rt });
+            ctx.clearRect(0, 0, canvas.width, canvas.height);
+            setTimeout(spawnCircle, 500);
+        }
+    }
+
+    async function submitAllData() {
+        document.getElementById('screen-task').style.display = 'none';
+        document.getElementById('screen-finished').style.display = 'flex';
+
+        const userAvg = Math.round(trials.reduce((a, b) => a + b.Reaction_Time, 0) / trials.length);
+        document.getElementById('avg-display').innerText = `Your Average: ${userAvg}ms`;
+
+        try {
+            // 1. Upload session trials
+            for (let i = 0; i < trials.length; i++) {
+                document.getElementById('status-text').innerText = `Saving trial ${i+1}/10...`;
+                await fetch(WEB_APP_URL, { method: "POST", mode: "no-cors", body: JSON.stringify(trials[i]) });
+            }
+
+            // 2. Fetch history and plot
+            document.getElementById('status-text').innerText = "Loading global stats...";
+            const response = await fetch(WEB_APP_URL);
+            const history = await response.json();
+
+            renderHistogram(history, userAvg);
+            
+            document.getElementById('status-title').innerText = "Results";
+            document.getElementById('status-text').innerText = "Data synced successfully.";
+            document.getElementById('loader').style.display = 'none';
+            document.getElementById('restart-btn').style.display = 'inline-block';
+        } catch (err) {
+            document.getElementById('status-title').innerText = "Complete (Offline)";
+            document.getElementById('status-text').innerText = "Could not reach the database, but here are your results.";
+            document.getElementById('loader').style.display = 'none';
+            document.getElementById('restart-btn').style.display = 'inline-block';
+        }
+    }
+
+    function renderHistogram(data, userAvg) {
+        const binSize = 100;
+        const bins = {};
+        data.forEach(val => {
+            const bin = Math.floor(val / binSize) * binSize;
+            bins[bin] = (bins[bin] || 0) + 1;
+        });
+
+        const labels = Object.keys(bins).sort((a, b) => a - b);
+        const counts = labels.map(l => bins[l]);
+        const userBinLabel = `${Math.floor(userAvg / binSize) * binSize}ms`;
+
+        new Chart(document.getElementById('rtChart'), {
+            type: 'bar',
+            data: {
+                labels: labels.map(l => `${l}ms`),
+                datasets: [{
+                    label: 'Other Participants',
+                    data: counts,
+                    backgroundColor: 'rgba(0, 230, 118, 0.2)',
+                    borderColor: '#00e676',
+                    borderWidth: 1
+                }]
+            },
+            options: {
+                responsive: true,
+                maintainAspectRatio: false,
+                plugins: {
+                    legend: { display: false },
+                    annotation: {
+                        annotations: {
+                            line1: {
+                                type: 'line',
+                                xMin: userBinLabel,
+                                xMax: userBinLabel,
+                                borderColor: '#ff1744',
+                                borderDash: [6, 6],
+                                borderWeight: 3,
+                                label: {
+                                    display: true,
+                                    content: `You (${userAvg}ms)`,
+                                    position: 'start',
+                                    backgroundColor: '#ff1744'
+                                }
+                            }
+                        }
+                    }
+                },
+                scales: {
+                    y: { beginAtZero: true, grid: { color: '#333' } },
+                    x: { grid: { display: false } }
+                }
+            }
+        });
+    }
+</script>
+</body>
+</html>
